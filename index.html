@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>跑步步態分析・運動生物力學追蹤 V4</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg-dark: #0f172a;
+      --card-bg: #1e293b;
+      --accent: #38bdf8;
+      --accent-green: #10b981;
+      --accent-warn: #f59e0b;
+      --accent-danger: #ef4444;
+      --accent-purple: #a855f7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+    body { background-color: var(--bg-dark); color: var(--text-main); padding: 20px; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #334155; padding-bottom: 15px; flex-wrap: wrap; gap: 10px; }
+    h1 { font-size: 1.45rem; color: var(--accent); display: flex; align-items: center; gap: 10px; }
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    button, .file-label {
+      background: #334155; color: white; border: 1px solid #475569; padding: 8px 14px;
+      border-radius: 6px; cursor: pointer; font-size: 0.9rem; transition: 0.2s; display: inline-flex; align-items: center; gap: 6px;
+    }
+    button:hover, .file-label:hover { background: var(--accent); color: #0f172a; font-weight: 600; }
+    button.active { background: var(--accent-green); color: #0f172a; border-color: var(--accent-green); font-weight: bold; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    input[type="file"] { display: none; }
+    input[type="number"], select {
+      background: #0f172a; color: #f8fafc; padding: 6px 8px; border: 1px solid #475569; border-radius: 6px; font-size: 0.85rem;
+    }
+    input[type="number"] { width: 76px; }
+
+    .calibration-bar {
+      background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 10px 16px;
+      margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center; font-size: 0.85rem;
+    }
+    .calibration-bar label { display: flex; align-items: center; gap: 6px; color: #e2e8f0; }
+    .calibration-hint { color: var(--text-muted); font-size: 0.8rem; margin-left: auto; }
+
+    .main-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); gap: 20px; }
+    .main-grid > div { min-width: 0; }
+    @media (max-width: 960px) { .main-grid { grid-template-columns: 1fr; } }
+
+    .video-container {
+      position: relative; background: #000; border-radius: 12px; overflow: hidden;
+      border: 1px solid #334155; height: clamp(380px, 65vh, 800px); display: flex; align-items: center; justify-content: center;
+    }
+    video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+    #outputCanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+    .overlay-badge {
+      position: absolute; top: 12px; left: 12px; background: rgba(15, 23, 42, 0.85);
+      padding: 6px 12px; border-radius: 20px; font-size: 0.8rem; border: 1px solid var(--accent);
+      max-width: calc(100% - 24px); pointer-events: none; z-index: 2;
+    }
+    .empty-state { position: absolute; text-align: center; color: #94a3b8; pointer-events: none; padding: 24px; line-height: 1.8; }
+
+    .playback-bar {
+      display: flex; gap: 10px; align-items: center; margin-top: 10px; background: var(--card-bg);
+      padding: 10px 15px; border-radius: 8px; flex-wrap: wrap;
+    }
+    .playback-bar label { font-size: 0.85rem; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+    .legend-toggles { display: flex; gap: 12px; font-size: 0.85rem; flex-wrap: wrap; }
+
+    .dashboard { display: flex; flex-direction: column; gap: 14px; }
+    .metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .metric-card {
+      background: var(--card-bg); padding: 14px; border-radius: 10px; border-left: 4px solid var(--accent);
+    }
+    .metric-title { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 4px; }
+    .metric-value { font-size: 1.35rem; font-weight: 700; }
+    .metric-sub { font-size: 0.75rem; color: #94a3b8; margin-top: 4px; line-height: 1.45; overflow-wrap: anywhere; }
+    .badge-tag {
+      display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; font-weight: 600; margin-top: 4px;
+    }
+    .tag-good { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .tag-warn { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+    .tag-danger { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+
+    .feedback-box {
+      background: var(--card-bg); padding: 14px; border-radius: 10px; border: 1px solid #334155;
+    }
+    .feedback-box h3 { font-size: 0.92rem; margin-bottom: 6px; color: var(--accent); }
+    #aiFeedback { font-size: 0.86rem; line-height: 1.55; color: #e2e8f0; }
+
+    .bilateral { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+    .bilateral b { font-size: 1.25rem; }
+    .bilateral small { color: #94a3b8; }
+
+    .chart-box { background: var(--card-bg); padding: 14px; border-radius: 10px; height: 220px; position: relative; }
+    .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 0.82rem; color: #cbd5e1; }
+
+    .trajectory-panel {
+      margin-top: 14px; padding: 16px; background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+    }
+    .trajectory-heading h2 { font-size: 1rem; color: #f8fafc; }
+    .trajectory-heading p, .trajectory-note { font-size: 0.78rem; color: #94a3b8; line-height: 1.6; margin-top: 4px; }
+    .trajectory-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 12px 0; font-size: 0.85rem; }
+    .trajectory-controls label { display: flex; align-items: center; gap: 6px; }
+    #trajectoryStatus { color: #94a3b8; font-size: 0.75rem; margin-left: auto; }
+    .trajectory-plot { height: 290px; position: relative; background: #0f172a; border-radius: 8px; overflow: hidden; }
+    #trajectoryCanvas { display: block; width: 100%; height: 100%; }
+
+    /* 文獻與操作說明區塊 */
+    .docs-panel {
+      margin-top: 22px; background: var(--card-bg); border: 1px solid #334155; border-radius: 12px; padding: 20px;
+    }
+    .docs-panel h2 { font-size: 1.15rem; color: var(--accent); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .docs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 12px; }
+    .doc-card { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 14px; }
+    .doc-card h3 { font-size: 0.95rem; color: #38bdf8; margin-bottom: 8px; }
+    .doc-card p, .doc-card li { font-size: 0.84rem; color: #cbd5e1; line-height: 1.6; }
+    .doc-card ul { padding-left: 18px; }
+    .ref-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 0.84rem; }
+    .ref-table th, .ref-table td { border: 1px solid #334155; padding: 9px 12px; text-align: left; }
+    .ref-table th { background: #0f172a; color: var(--accent); }
+    .ref-table tr:nth-child(even) { background: rgba(15, 23, 42, 0.45); }
+    .ref-cite { font-size: 0.78rem; color: #94a3b8; margin-top: 12px; line-height: 1.6; }
+
+    @media (max-width: 600px) {
+      body { padding: 12px; }
+      h1 { font-size: 1.15rem; }
+      .calibration-hint, #trajectoryStatus { margin-left: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🏃‍♂️ 跑步步態分析・運動生物力學追蹤 V4</h1>
+  <div class="controls">
+    <button id="btnWebcam">📷 開啟即時攝影機</button>
+    <label class="file-label">
+      📁 上傳跑步影片
+      <input type="file" id="videoUpload" accept="video/*" />
+    </label>
+    <button id="btnClearTrail">🧹 清除軌跡</button>
+    <button id="btnExportCSV">📊 匯出 CSV 數據</button>
+  </div>
+</header>
+
+<!-- 比例尺與跑者參數校正列 -->
+<div class="calibration-bar">
+  <label>
+    📏 跑者身高：
+    <input type="number" id="runnerHeight" value="170" min="120" max="220" step="1" /> cm
+  </label>
+  <label>
+    🧭 跑步方向：
+    <select id="runDirection">
+      <option value="auto">自動偵測行進方向</option>
+      <option value="right">畫面由左向右跑 (→)</option>
+      <option value="left">畫面由右向左跑 (←)</option>
+    </select>
+  </label>
+  <span class="calibration-hint" id="scaleStatus">比例尺校正：等待偵測全身骨架以自動換算 cm</span>
+</div>
+
+<div class="main-grid">
+  <!-- 左側：影像與骨架軌跡畫布 -->
+  <div>
+    <div class="video-container">
+      <div class="overlay-badge" id="statusBadge">系統就緒：請選擇攝影機或上傳側面跑步影片</div>
+      <video id="inputVideo" playsinline muted preload="auto"></video>
+      <canvas id="outputCanvas" width="1280" height="720"></canvas>
+      <div class="empty-state" id="emptyState">
+        上傳側面跑步影片（Sagittal Plane）或開啟攝影機<br>
+        自動估算：步頻・平均步幅曲線・COM 過跨距離・關節角度<br>
+        輸入身高可自動將影像像素換算為真實公分（cm）
+      </div>
+    </div>
+
+    <div class="playback-bar">
+      <button id="btnPlayPause">⏯️ 播放 / 暫停</button>
+      <span>速度：</span>
+      <button class="speed-btn" data-speed="0.25">0.25x</button>
+      <button class="speed-btn" data-speed="0.5">0.5x</button>
+      <button class="speed-btn active" data-speed="1.0">1.0x</button>
+      <label>摘要側別
+        <select id="side">
+          <option value="auto">自動選較清楚側</option>
+          <option value="left">左側</option>
+          <option value="right">右側</option>
+        </select>
+      </label>
+      <label>顯示比例
+        <select id="aspect">
+          <option value="comfort">舒適高度</option>
+          <option value="source">原始比例</option>
+          <option value="4/3">4:3</option>
+          <option value="9/16">直式 9:16</option>
+        </select>
+      </label>
+      <label>畫面
+        <select id="fit">
+          <option value="contain">完整顯示</option>
+          <option value="cover">填滿裁切</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="angles" checked> 角度與COM線</label>
+      <label><input type="checkbox" id="mirror"> 鏡像</label>
+      <label><input type="checkbox" id="skeleton" checked> 骨架</label>
+      <div class="legend-toggles">
+        <label><input type="checkbox" id="overlayTrail"> 疊加腳踝軌跡</label>
+        <label><input type="checkbox" id="chkHipTrail"> 疊加COM(骨盆)軌跡</label>
+      </div>
+    </div>
+
+    <div class="playback-bar">
+      <span id="timeLabel">00:00 / 00:00</span>
+      <input id="seek" type="range" min="0" max="100" step="0.01" value="0" disabled style="flex:1;min-width:120px" aria-label="影片進度">
+    </div>
+
+    <!-- 雙腳軌跡圖 -->
+    <section class="trajectory-panel" aria-labelledby="trajectoryTitle">
+      <div class="trajectory-heading">
+        <div>
+          <h2 id="trajectoryTitle">左右腳踝二維移動軌跡</h2>
+          <p>空心點為起點，實心點為最新位置；可觀察腳踝後勾（Heel Recovery）與跨步畫圓路徑。</p>
+        </div>
+      </div>
+      <div class="trajectory-controls">
+        <label style="color:#38bdf8"><input type="checkbox" id="chkAnkleTrail" checked> 左腳踝</label>
+        <label style="color:#f472b6"><input type="checkbox" id="chkRightTrail" checked> 右腳踝</label>
+        <label>顯示最近
+          <select id="trailDuration">
+            <option value="1.5">1.5 秒</option>
+            <option value="3" selected>3 秒</option>
+            <option value="5">5 秒</option>
+          </select>
+        </label>
+        <span id="trajectoryStatus" role="status">播放影片後顯示軌跡</span>
+      </div>
+      <div class="trajectory-plot">
+        <canvas id="trajectoryCanvas"></canvas>
+      </div>
+    </section>
+  </div>
+
+  <!-- 右側：數據儀表板與波形圖 -->
+  <div class="dashboard">
+    <div class="feedback-box">
+      <strong>左右膝即時內夾角（伸直約 180°）</strong>
+      <div class="bilateral">
+        <div style="color:#38bdf8">左膝 <b id="leftKnee">等待偵測</b><br><small id="leftQuality">請先開啟影片</small></div>
+        <div style="color:#f472b6">右膝 <b id="rightKnee">等待偵測</b><br><small id="rightQuality">請先開啟影片</small></div>
+      </div>
+    </div>
+
+    <!-- 核心六大生物力學指標卡片 -->
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-title">即時步頻 (Cadence)</div>
+        <div class="metric-value" id="valCadence">-- <span style="font-size:0.85rem">spm</span></div>
+        <div id="cadenceBadge"></div>
+        <div class="metric-sub" id="cadenceHint">需至少 3 個規律週期</div>
+      </div>
+
+      <div class="metric-card" style="border-left-color: #06b6d4;">
+        <div class="metric-title">平均步幅 (Avg Step Length)</div>
+        <div class="metric-value" id="valStepLength">-- <span style="font-size:0.85rem">cm</span></div>
+        <div id="stepBadge"></div>
+        <div class="metric-sub" id="stepHint">雙腳最大跨距估算（跑步機亦適用）</div>
+      </div>
+
+      <div class="metric-card" style="border-left-color: var(--accent-danger);">
+        <div class="metric-title">COM 前跨距離 (Overstriding)</div>
+        <div class="metric-value" id="valComLead">-- <span style="font-size:0.85rem">cm</span></div>
+        <div id="comBadge"></div>
+        <div class="metric-sub" id="comHint">前腳踝相對於骨盆質心(COM)水平距離</div>
+      </div>
+
+      <div class="metric-card" style="border-left-color: var(--accent-green);">
+        <div class="metric-title">軀幹前傾角 (Trunk Lean)</div>
+        <div class="metric-value" id="valTrunk">--°</div>
+        <div id="trunkBadge"></div>
+        <div class="metric-sub">理想區間：約 5° – 12° 微前傾</div>
+      </div>
+
+      <div class="metric-card" style="border-left-color: var(--accent-warn);">
+        <div class="metric-title">選定側膝關節角度</div>
+        <div class="metric-value" id="valKnee">--°</div>
+        <div class="metric-sub" id="subKnee">支撐期緩衝約 135°–150°</div>
+      </div>
+
+      <div class="metric-card" style="border-left-color: var(--accent-purple);">
+        <div class="metric-title">COM 垂直振幅 (Vertical Osc.)</div>
+        <div class="metric-value" id="valOscillation">-- <span style="font-size:0.85rem">cm</span></div>
+        <div class="metric-sub" id="oscHint">近 2 秒骨盆上下起伏（理想 &lt; 8–10 cm）</div>
+      </div>
+    </div>
+
+    <div class="feedback-box">
+      <h3>🤖 運動生物力學即時診斷</h3>
+      <div id="aiFeedback">等待骨架偵測中... 建議使用「側面視角（Sagittal Plane）」拍攝全身跑步畫面以獲得最準確的步幅與 COM 分析。</div>
+    </div>
+
+    <!-- 圖表 1：關節角度波形 -->
+    <div class="chart-box">
+      <div class="chart-header">
+        <span>📈 關節角度即時波形 (°)</span>
+        <span style="color:#94a3b8;font-size:0.75rem">左膝 / 右膝 / 軀幹</span>
+      </div>
+      <div style="height:175px"><canvas id="kinematicChart"></canvas></div>
+    </div>
+
+    <!-- 圖表 2：平均步幅與 COM 前跨距離趨勢曲線 -->
+    <div class="chart-box">
+      <div class="chart-header">
+        <span>📊 步幅與 COM 前跨距離趨勢曲線 (cm)</span>
+        <span style="color:#94a3b8;font-size:0.75rem">單步跨距 / 滑動平均步幅 / COM前距</span>
+      </div>
+      <div style="height:175px"><canvas id="strideChart"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<!-- 底部：操作說明與運動生物力學文獻參考指南 -->
+<section class="docs-panel" aria-labelledby="docsTitle">
+  <h2 id="docsTitle">📚 系統操作說明與跑步生物力學文獻參考指標</h2>
+  <div class="docs-grid">
+    <div class="doc-card">
+      <h3>1. 拍攝與操作步驟</h3>
+      <ul>
+        <li><strong>攝影機架設：</strong>請將手機或相機架設於跑者<strong>正側面（矢狀面 Sagittal Plane）</strong>，距離約 3–5 公尺，確保頭頂到腳底完整入鏡。</li>
+        <li><strong>身高比例尺校正：</strong>在上方輸入欄填入跑者實際身高（預設 170 cm），系統會依據「肩—髖—膝—踝」人體計測學比例（約佔總身高 53%），自動將畫面像素換算為<strong>公分（cm）</strong>。</li>
+        <li><strong>跑步機與路跑皆適用：</strong>步幅估算採用「雙腳腳踝最大水平張開距離（Inter-ankle Span）」演算法，即使在跑步機上原地跑動，也能準確繪製步幅變化曲線。</li>
+        <li><strong>慢動作檢視：</strong>可切換 <code>0.25x</code> 或 <code>0.5x</code> 觀察著地瞬間（Initial Contact）的腳踝與 COM 垂直線關係。</li>
+      </ul>
+    </div>
+
+    <div class="doc-card">
+      <h3>2. 關鍵生物力學參數解析</h3>
+      <ul>
+        <li><strong>COM 前跨距離（Overstriding）：</strong>畫面中黃色垂直虛線代表骨盆質心（COM）投影線。若著地瞬間前腳踝過度超前黃線，會產生煞車反作用力（Braking Force），增加膝關節與脛骨應力。</li>
+        <li><strong>平均步幅曲線（Average Step Length）：</strong>記錄每次跨步的最大雙腳間距並計算滑動平均值。長跑後段若步幅曲線明顯下滑，代表下肢肌力疲勞或推蹬效率下降。</li>
+        <li><strong>步頻（Cadence, spm）：</strong>每分鐘總步數。提高步頻通常會自然縮短過跨距離，減少著地衝擊。</li>
+        <li><strong>軀幹前傾角（Trunk Lean）：</strong>適度由踝關節帶動的整體微前傾有助於利用重力前進；過度彎腰折髖則會限制髖伸展。</li>
+      </ul>
+    </div>
+  </div>
+
+  <table class="ref-table">
+    <thead>
+      <tr>
+        <th>生物力學指標</th>
+        <th>文獻建議參考區間</th>
+        <th>偏離區間的常見風險與調整建議</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>步頻 (Cadence)</strong></td>
+        <td><strong>170 – 185 spm</strong><br><small>(耐力跑常見最佳效率區間)</small></td>
+        <td>低於 165 spm 易伴隨大跨步與高衝擊；建議透過節拍器逐步提升 5%–7% 步頻。</td>
+      </tr>
+      <tr>
+        <td><strong>COM 前跨距離 (Overstriding)</strong></td>
+        <td><strong>15 – 25 cm</strong>（約 10%–15% 身高）<br><small>(著地瞬間腳踝領先 COM 距離)</small></td>
+        <td>若超過 30 cm（&gt;18% 身高），代表明顯跨大步煞車，易引發跑者膝（PFPS）或脛前疼痛。</td>
+      </tr>
+      <tr>
+        <td><strong>平均步幅 (Step Length)</strong></td>
+        <td><strong>90 – 135 cm</strong><br><small>(依配速與身高而異，約 0.55–0.80 倍身高)</small></td>
+        <td>應隨配速提升而自然增加，但應來自「向後推蹬與騰空」，而非向前伸小腿。</td>
+      </tr>
+      <tr>
+        <td><strong>軀幹前傾角 (Trunk Lean)</strong></td>
+        <td><strong>5° – 12°</strong>（微前傾）</td>
+        <td>0° 以下（後仰）會增加煞車力；超過 15° 過度前傾易造成下背緊繃與骨盆前傾。</td>
+      </tr>
+      <tr>
+        <td><strong>COM 垂直振幅 (Vertical Osc.)</strong></td>
+        <td><strong>6.0 – 9.5 cm</strong></td>
+        <td>振幅過高（&gt;11 cm）代表能量浪費在「向上跳躍」而非水平推進，降低跑步經濟性。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="ref-cite">
+    <strong>主要參考文獻：</strong>
+    1. Heiderscheit, B. C., et al. (2011). <em>Effects of step rate manipulation on joint mechanics during running.</em> Medicine &amp; Science in Sports &amp; Exercise, 43(2), 296–302.<br>
+    2. Souza, R. B. (2016). <em>An Evidence-Based Videotaped Running Biomechanics Analysis.</em> Physical Medicine and Rehabilitation Clinics of North America, 27(1), 217–236.<br>
+    3. Hunter, J. P., Marshall, R. N., &amp; McNair, P. J. (2004). <em>Interaction of step length and step rate during sprint running.</em> Medicine &amp; Science in Sports &amp; Exercise, 36(2), 261–271.
+  </p>
+</section>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const video = $('inputVideo'), canvas = $('outputCanvas'), ctx = canvas.getContext('2d');
+const inferenceCanvas = document.createElement('canvas'), inferenceCtx = inferenceCanvas.getContext('2d');
+const resultCanvas = document.createElement('canvas'), resultCtx = resultCanvas.getContext('2d');
+
+let initPromise = null;
+let pose = null, chart = null, strideChart = null, mode = '', stream = null, sourceURL = null;
+let epoch = 0, busy = false, lastTime = -1, frameTime = 0, frameEpoch = 0;
+let rows = [], selected = null, lastChart = -1, lastSample = -1, latest = null, lastResult = null;
+
+// 全身比例尺與步幅狀態追蹤
+let pxPerCm = null; // 動態校正的每公分像素數
+let strideState = {
+  spanWave: [],       // 雙腳水平距離波形
+  stepPeaks: [],      // 偵測到的單步最大跨距 (cm)
+  avgStepLength: null,// 滑動平均步幅 (cm)
+  lastStepCm: null,   // 最新單步跨距 (cm)
+  comLeadCm: null,    // 前腳踝相對於 COM 的水平領先距離 (cm)
+  comX: null,         // COM X 座標 (px)
+  comY: null,         // COM Y 座標 (px)
+  detectedDir: 1      // 1 = 向右跑, -1 = 向左跑
+};
+
+const sides = { left: [11, 23, 25, 27, 29, 31], right: [12, 24, 26, 28, 30, 32] };
+const colors = { left: '#38bdf8', right: '#f472b6' };
+const links = [[11,12],[11,23],[12,24],[23,24],[23,25],[25,27],[27,29],[29,31],[31,27],[24,26],[26,28],[28,30],[30,32],[32,28]];
+
+const fresh = () => ({ trail: [], hipTrail: [], hips: [], wave: [], peaks: [], last: null, knee: null, trunk: null, osc: null, cadence: null, q: 0, ankle: null });
+let states = { left: fresh(), right: fresh() };
+
+function status(s) { $('statusBadge').textContent = s; }
+
+function missing() {
+  for (const id of ['valKnee', 'valTrunk', 'valCadence', 'valOscillation', 'valStepLength', 'valComLead', 'leftKnee', 'rightKnee']) {
+    $(id).textContent = '等待偵測';
+  }
+  ['cadenceBadge', 'stepBadge', 'comBadge', 'trunkBadge'].forEach(id => $(id).innerHTML = '');
+}
+
+function reset() {
+  rows = [];
+  states = { left: fresh(), right: fresh() };
+  strideState = { spanWave: [], stepPeaks: [], avgStepLength: null, lastStepCm: null, comLeadCm: null, comX: null, comY: null, detectedDir: 1 };
+  pxPerCm = null;
+  selected = null; lastTime = -1; lastChart = -1; lastSample = -1; latest = null; lastResult = null;
+  $('scaleStatus').textContent = '比例尺校正：等待偵測全身骨架以自動換算 cm';
+  missing();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawTrajectory();
+  if (chart) { chart.data.labels = []; chart.data.datasets.forEach(d => d.data = []); chart.update('none'); }
+  if (strideChart) { strideChart.data.labels = []; strideChart.data.datasets.forEach(d => d.data = []); strideChart.update('none'); }
+}
+
+function layout() {
+  const box = canvas.parentElement, ratio = $('aspect').value;
+  box.style.height = ratio === 'comfort' ? '' : 'auto';
+  box.style.aspectRatio = ratio === 'comfort' ? 'auto' : ratio === 'source' ? `${canvas.width}/${canvas.height}` : ratio;
+  canvas.style.objectFit = $('fit').value;
+}
+
+function dimensions() {
+  const w = video.videoWidth || canvas.width, h = video.videoHeight || canvas.height;
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; layout(); }
+}
+
+function visible(p) {
+  return !!p && Number.isFinite(p.x) && Number.isFinite(p.y) && (p.visibility ?? 0) >= 0.5 && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+}
+
+function pixel(p) { return { x: p.x * canvas.width, y: p.y * canvas.height }; }
+
+function angle(a, b, c) {
+  const u = { x: a.x - b.x, y: a.y - b.y }, v = { x: c.x - b.x, y: c.y - b.y };
+  const n = Math.hypot(u.x, u.y) * Math.hypot(v.x, v.y);
+  return n > 1e-6 ? Math.acos(Math.max(-1, Math.min(1, (u.x * v.x + u.y * v.y) / n))) * 180 / Math.PI : null;
+}
+
+function quality(lm, side) {
+  return Math.min(...sides[side].slice(1, 4).map(i => visible(lm[i]) ? lm[i].visibility : 0));
+}
+
+function line(points, color, width, dash = []) {
+  if (points.length < 2) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.setLineDash(dash);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  points.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.stroke();
+  ctx.restore();
+}
+
+function textAt(text, p, color) {
+  const w = canvas.width, h = canvas.height, size = Math.max(15, w / 68);
+  ctx.save();
+  ctx.font = `600 ${size}px system-ui`;
+  const tw = ctx.measureText(text).width;
+  let x = Math.min(w - tw - 12, Math.max(8, p.x + 12));
+  let y = Math.min(h - size - 8, Math.max(size + 8, p.y - 12));
+  if ($('mirror').checked) {
+    ctx.translate(w, 0); ctx.scale(-1, 1);
+    x = Math.min(w - tw - 12, Math.max(8, w - p.x + 12));
+  }
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+  ctx.fillRect(x - 5, y - size, tw + 10, size + 9);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+// 依據人體計測學比例（肩-髖-膝-踝鏈長約佔身高 78%）動態校正 px/cm
+function updateScaleCalibration(lm) {
+  const heightCm = Math.max(120, Math.min(220, Number($('runnerHeight').value) || 170));
+  let chainPx = 0;
+  for (const side of ['left', 'right']) {
+    const [si, hi, ki, ai] = sides[side];
+    if ([lm[si], lm[hi], lm[ki], lm[ai]].every(visible)) {
+      const s = pixel(lm[si]), h = pixel(lm[hi]), k = pixel(lm[ki]), a = pixel(lm[ai]);
+      const segSum = Math.hypot(s.x - h.x, s.y - h.y) + Math.hypot(h.x - k.x, h.y - k.y) + Math.hypot(k.x - a.x, k.y - a.y);
+      if (segSum > chainPx) chainPx = segSum;
+    }
+  }
+  if (chainPx > 40) {
+    // 肩關節至外踝的解剖學分段總長約為身高的 78%
+    const estPxPerCm = chainPx / (heightCm * 0.78);
+    pxPerCm = pxPerCm ? pxPerCm * 0.85 + estPxPerCm * 0.15 : estPxPerCm;
+    $('scaleStatus').textContent = `比例尺已校正：1 cm ≈ ${pxPerCm.toFixed(2)} px（基準身高 ${heightCm} cm）`;
+  }
+}
+
+// 計算 COM 位置、COM 前跨距離（Overstriding）與平均步幅（Step Length）
+function sampleBiomechanics(lm, t) {
+  updateScaleCalibration(lm);
+
+  // 1. 計算骨盆質心 (COM 近似點)
+  const lh = lm[23], rh = lm[24];
+  let com = null;
+  if (visible(lh) && visible(rh)) {
+    const p1 = pixel(lh), p2 = pixel(rh);
+    com = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+  } else if (visible(lh)) {
+    com = pixel(lh);
+  } else if (visible(rh)) {
+    com = pixel(rh);
+  }
+  strideState.comX = com ? com.x : null;
+  strideState.comY = com ? com.y : null;
+
+  // 2. 判斷行進方向（由鼻子/腳趾朝向或用戶指定）
+  const dirMode = $('runDirection').value;
+  if (dirMode === 'right') strideState.detectedDir = 1;
+  else if (dirMode === 'left') strideState.detectedDir = -1;
+  else {
+    // 自動依據腳跟(29,30)到腳尖(31,32)向量判斷朝向
+    let toeDiff = 0;
+    if (visible(lm[29]) && visible(lm[31])) toeDiff += (lm[31].x - lm[29].x);
+    if (visible(lm[30]) && visible(lm[32])) toeDiff += (lm[32].x - lm[30].x);
+    if (Math.abs(toeDiff) > 0.01) strideState.detectedDir = toeDiff >= 0 ? 1 : -1;
+  }
+
+  // 3. 計算雙腳跨步與 COM 前跨距離
+  const la = states.left.ankle, ra = states.right.ankle;
+  if (la && ra && pxPerCm) {
+    const spanPx = Math.abs(la.x - ra.x);
+    const spanCm = spanPx / pxPerCm;
+    const smoothSpan = strideState.spanWave.length ? strideState.spanWave.at(-1).v * 0.35 + spanCm * 0.65 : spanCm;
+    strideState.spanWave.push({ t, v: smoothSpan });
+    strideState.spanWave = strideState.spanWave.filter(p => t - p.t <= 2.5);
+
+    // 偵測跨步最大張開峰值（Step Length Peak）
+    if (strideState.spanWave.length >= 3) {
+      const a = strideState.spanWave.at(-3), b = strideState.spanWave.at(-2), c = strideState.spanWave.at(-1);
+      if (a.v < b.v && b.v >= c.v && b.v > 35 && b.v < 230) {
+        if (!strideState.stepPeaks.length || b.t - strideState.stepPeaks.at(-1).t > 0.22) {
+          strideState.stepPeaks.push({ t: b.t, cm: b.v });
+          strideState.lastStepCm = b.v;
+        }
+      }
+    }
+    strideState.stepPeaks = strideState.stepPeaks.filter(p => t - p.t <= 12);
+    if (strideState.stepPeaks.length >= 1) {
+      const sum = strideState.stepPeaks.reduce((acc, p) => acc + p.cm, 0);
+      strideState.avgStepLength = sum / strideState.stepPeaks.length;
+    }
+
+    // 計算前腳踝相對於 COM 的水平領先距離 (Overstriding)
+    if (com) {
+      const leadLeft = (la.x - com.x) * strideState.detectedDir;
+      const leadRight = (ra.x - com.x) * strideState.detectedDir;
+      const maxLeadPx = Math.max(leadLeft, leadRight);
+      strideState.comLeadCm = maxLeadPx / pxPerCm;
+    }
+  } else if (com && (la || ra) && pxPerCm) {
+    const activeAnkle = la || ra;
+    strideState.comLeadCm = ((activeAnkle.x - com.x) * strideState.detectedDir) / pxPerCm;
+  } else {
+    strideState.comLeadCm = null;
+  }
+}
+
+function draw(image, lm) {
+  dimensions();
+  const w = canvas.width, h = canvas.height;
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  if ($('mirror').checked) { ctx.translate(w, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(image, 0, 0, w, h);
+  $('emptyState').hidden = true;
+
+  for (const side of ['left', 'right']) {
+    const st = states[side];
+    const enabled = $('overlayTrail').checked && $(side === 'left' ? 'chkAnkleTrail' : 'chkRightTrail').checked;
+    if (enabled) line(st.trail, colors[side], Math.max(2, w / 450));
+    if ($('chkHipTrail').checked) line(st.hipTrail, '#facc15', 2);
+  }
+
+  // 繪製 COM 質心垂直參考線與前跨距離連線 (Overstriding Visual)
+  if (lm && $('angles').checked && strideState.comX !== null && strideState.comY !== null) {
+    const cx = strideState.comX, cy = strideState.comY;
+    // COM 垂直鉛垂線
+    line([{ x: cx, y: Math.max(20, cy - h * 0.25) }, { x: cx, y: Math.min(h - 15, cy + h * 0.45) }], '#facc15', 2, [6, 6]);
+    // 繪製 COM 圓點
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(5, w / 210), 0, Math.PI * 2);
+    ctx.fillStyle = '#facc15';
+    ctx.fill();
+
+    // 繪製前腳踝到 COM 鉛垂線的水平跨距指示線
+    const la = states.left.ankle, ra = states.right.ankle;
+    let frontAnkle = null;
+    if (la && ra) {
+      frontAnkle = ((la.x - cx) * strideState.detectedDir >= (ra.x - cx) * strideState.detectedDir) ? la : ra;
+    } else {
+      frontAnkle = la || ra;
+    }
+    if (frontAnkle && strideState.comLeadCm !== null && strideState.comLeadCm > 0) {
+      line([{ x: cx, y: frontAnkle.y }, { x: frontAnkle.x, y: frontAnkle.y }], '#ef4444', 3);
+      textAt(`COM前距 ${strideState.comLeadCm.toFixed(1)} cm`, { x: (cx + frontAnkle.x) / 2, y: frontAnkle.y + 24 }, '#fca5a5');
+    }
+  }
+
+  if (lm && $('skeleton').checked) {
+    for (const [a, b] of links) {
+      if (visible(lm[a]) && visible(lm[b])) {
+        const side = sides.left.includes(a) && sides.left.includes(b) ? 'left' : sides.right.includes(a) && sides.right.includes(b) ? 'right' : null;
+        line([pixel(lm[a]), pixel(lm[b])], side ? colors[side] : '#cbd5e1', Math.max(2, w / 500));
+      }
+    }
+    for (const i of [...new Set(links.flat())]) {
+      if (visible(lm[i])) {
+        const p = pixel(lm[i]);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, Math.max(3, w / 250), 0, Math.PI * 2);
+        ctx.fillStyle = sides.left.includes(i) ? colors.left : colors.right;
+        ctx.fill();
+      }
+    }
+  }
+
+  if (lm && $('angles').checked) {
+    for (const side of ['left', 'right']) {
+      const st = states[side], ids = sides[side];
+      if (st.knee !== null && visible(lm[ids[2]])) textAt(`${side === 'left' ? '左膝' : '右膝'} ${st.knee.toFixed(1)}°`, pixel(lm[ids[2]]), colors[side]);
+      if (st.trunk !== null && visible(lm[ids[0]])) textAt(`${side === 'left' ? '左' : '右'}軀幹 ${st.trunk.toFixed(1)}°`, pixel(lm[ids[0]]), '#34d399');
+    }
+  }
+  ctx.restore();
+  drawTrajectory();
+}
+
+function sampleSide(lm, side, t) {
+  let st = states[side];
+  if (st.last !== null && (t - st.last > 0.5 || t < st.last)) { st = fresh(); states[side] = st; }
+  st.last = t;
+  st.trail = st.trail.filter(p => t - p.t < Number($('trailDuration').value));
+  st.hipTrail = st.hipTrail.filter(p => t - p.t < Number($('trailDuration').value));
+  st.q = quality(lm, side);
+  st.knee = null; st.trunk = null; st.osc = null; st.ankle = null;
+
+  const [si, hi, ki, ai] = sides[side], s = lm[si], h = lm[hi], k = lm[ki], a = lm[ai];
+  if ([h, k, a].every(visible)) st.knee = angle(pixel(h), pixel(k), pixel(a));
+  if ([s, h].every(visible)) {
+    const sp = pixel(s), hp = pixel(h);
+    st.trunk = Math.abs(Math.atan2(sp.x - hp.x, hp.y - sp.y) * 180 / Math.PI);
+  }
+  if (visible(a)) {
+    st.ankle = pixel(a);
+    st.trail.push({ ...st.ankle, t });
+    st.trail = st.trail.slice(-600);
+  } else st.trail = [];
+
+  if (visible(h)) {
+    const hp = pixel(h);
+    st.hipTrail.push({ ...hp, t });
+    st.hipTrail = st.hipTrail.slice(-600);
+    st.hips.push({ t, y: hp.y });
+    st.hips = st.hips.filter(p => t - p.t <= 2);
+    if (st.hips.length > 2 && t - st.hips[0].t >= 0.5) {
+      st.osc = Math.max(...st.hips.map(p => p.y)) - Math.min(...st.hips.map(p => p.y));
+    }
+  } else { st.hips = []; st.hipTrail = []; }
+
+  st.cadence = null;
+  if ([h, a].every(visible)) {
+    const y = (a.y - h.y) * canvas.height;
+    const smooth = st.wave.length ? st.wave.at(-1).y * 0.4 + y * 0.6 : y;
+    st.wave.push({ t, y: smooth });
+    st.wave = st.wave.filter(p => t - p.t <= 1.8);
+    if (st.wave.length >= 3) {
+      const aa = st.wave.at(-3), b = st.wave.at(-2), c = st.wave.at(-1);
+      const span = Math.max(...st.wave.map(p => p.y)) - Math.min(...st.wave.map(p => p.y));
+      if (aa.y < b.y && b.y >= c.y && span > canvas.height * 0.015 && (!st.peaks.length || b.t - st.peaks.at(-1) > 0.38)) {
+        st.peaks.push(b.t);
+      }
+    }
+    st.peaks = st.peaks.filter(p => t - p <= 8);
+    if (st.peaks.length >= 4 && t - st.peaks.at(-1) < 1.8) {
+      const intervals = st.peaks.slice(1).map((p, i) => p - st.peaks[i]);
+      const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      const cv = Math.sqrt(intervals.reduce((v, x) => v + (x - mean) ** 2, 0) / intervals.length) / mean;
+      const estimate = 120 / mean;
+      if (cv < 0.25 && estimate >= 60 && estimate <= 240) st.cadence = Math.round(estimate);
+    }
+  } else { st.wave = []; st.peaks = []; }
+}
+
+function results(r) {
+  if (frameEpoch !== epoch) return;
+  dimensions();
+  resultCanvas.width = canvas.width;
+  resultCanvas.height = canvas.height;
+  resultCtx.drawImage(r.image, 0, 0, resultCanvas.width, resultCanvas.height);
+  lastResult = { ...r, image: resultCanvas };
+  const lm = r.poseLandmarks, t = frameTime;
+  if (lm) {
+    for (const side of ['left', 'right']) sampleSide(lm, side, t);
+    sampleBiomechanics(lm, t);
+  } else {
+    states = { left: fresh(), right: fresh() };
+  }
+  render(lastResult, true);
+}
+
+function setBadge(elId, text, type) {
+  $(elId).innerHTML = text ? `<span class="badge-tag tag-${type}">${text}</span>` : '';
+}
+
+function render(r, record) {
+  const lm = r.poseLandmarks, t = frameTime;
+  let side = $('side').value;
+  if (side === 'auto') {
+    side = selected || 'left';
+    const other = side === 'left' ? 'right' : 'left';
+    if (states[other].q > states[side].q + 0.12 || (states[side].q < 0.5 && states[other].q >= 0.5)) side = other;
+  }
+  selected = side;
+  const st = states[side], other = states[side === 'left' ? 'right' : 'left'];
+
+  for (const name of ['left', 'right']) {
+    const s = states[name];
+    $(name + 'Knee').textContent = s.knee === null ? '未辨識' : `${s.knee.toFixed(1)}°`;
+    $(name + 'Quality').textContent = s.q >= 0.5 ? `腿部信心 ${Math.round(s.q * 100)}%` : '髖、膝或腳踝被遮擋';
+  }
+
+  const trunk = st.trunk ?? ($('side').value === 'auto' ? other.trunk : null);
+  const oscPx = st.osc ?? ($('side').value === 'auto' ? other.osc : null);
+  const cadence = st.cadence ?? ($('side').value === 'auto' ? other.cadence : null);
+  const avgStep = strideState.avgStepLength;
+  const comLead = strideState.comLeadCm;
+  const heightCm = Number($('runnerHeight').value) || 170;
+
+  // 1. 步頻評估 (Heiderscheit et al., 2011)
+  $('valCadence').textContent = cadence === null ? '等待規律步態' : `${cadence} spm`;
+  if (cadence !== null) {
+    if (cadence >= 170 && cadence <= 190) setBadge('cadenceBadge', '✓ 黃金效率區間 (170-185)', 'good');
+    else if (cadence < 170) setBadge('cadenceBadge', '⚠ 步頻偏低 (易產生過跨煞車)', 'warn');
+    else setBadge('cadenceBadge', '⚡ 高步頻衝刺區間', 'good');
+  } else setBadge('cadenceBadge', '', '');
+  $('cadenceHint').textContent = cadence === null ? `已偵測 ${Math.max(0, st.peaks.length - 1)} 個週期，需 3 個以上` : '文獻建議耐力跑維持 170–185 spm';
+
+  // 2. 平均步幅
+  $('valStepLength').textContent = avgStep === null ? '累積跨步中' : `${avgStep.toFixed(1)} cm`;
+  if (avgStep !== null) {
+    const ratio = (avgStep / heightCm * 100).toFixed(0);
+    setBadge('stepBadge', `約身高 ${ratio}% · 最新單步 ${strideState.lastStepCm.toFixed(0)} cm`, 'good');
+  } else setBadge('stepBadge', '', '');
+
+  // 3. COM 前跨距離 (Overstriding)
+  $('valComLead').textContent = comLead === null ? '等待雙腳入鏡' : `${comLead.toFixed(1)} cm`;
+  if (comLead !== null) {
+    const leadPct = (comLead / heightCm) * 100;
+    if (leadPct <= 15) setBadge('comBadge', `✓ 良好落點 (${leadPct.toFixed(1)}% 身高)`, 'good');
+    else if (leadPct <= 18) setBadge('comBadge', `⚠ 略微前跨 (${leadPct.toFixed(1)}% 身高)`, 'warn');
+    else setBadge('comBadge', `❗ 明顯過跨 Overstriding (${leadPct.toFixed(1)}%)`, 'danger');
+  } else setBadge('comBadge', '', '');
+
+  // 4. 軀幹前傾角
+  $('valTrunk').textContent = trunk === null ? '肩髖未辨識' : `${trunk.toFixed(1)}°`;
+  if (trunk !== null) {
+    if (trunk >= 4 && trunk <= 13) setBadge('trunkBadge', '✓ 理想微前傾 (5°–12°)', 'good');
+    else if (trunk < 4) setBadge('trunkBadge', '⚠ 軀幹偏直/後仰', 'warn');
+    else setBadge('trunkBadge', '⚠ 前傾角度過大 (>13°)', 'warn');
+  } else setBadge('trunkBadge', '', '');
+
+  // 5. 膝關節與 COM 垂直振幅
+  $('valKnee').textContent = st.knee === null ? '腿部未辨識' : `${st.knee.toFixed(1)}°`;
+  $('subKnee').textContent = `摘要側別：${side === 'left' ? '左' : '右'}膝`;
+
+  const oscCm = (oscPx !== null && pxPerCm) ? (oscPx / pxPerCm) : null;
+  $('valOscillation').textContent = oscCm !== null ? `${oscCm.toFixed(1)} cm` : (oscPx !== null ? `${oscPx.toFixed(1)} px` : '累積影像中');
+  $('oscHint').textContent = oscCm !== null ? (oscCm <= 9.5 ? '✓ 垂直振幅經濟性良好 (<9.5 cm)' : '⚠ 上下起伏偏大，建議增加步頻') : '需連續可見骨盆 0.5 秒';
+
+  status(lm ? `分析中 · 比例尺 ${pxPerCm ? pxPerCm.toFixed(2) + ' px/cm' : '校正中'} · 已記錄 ${rows.length} 筆` : '未偵測到人體，請讓全身完整入鏡');
+
+  // 生成生物力學綜合診斷文字
+  const notes = [];
+  if (!lm) {
+    notes.push('目前畫面未偵測到完整人體骨架，請確認鏡頭涵蓋頭頂至腳底。');
+  } else {
+    if (comLead !== null && (comLead / heightCm) > 0.18) {
+      notes.push(`【過跨提醒】前腳踝領先骨盆質心(COM)達 ${comLead.toFixed(1)} cm，著地煞車力較高，建議縮短向前伸腿幅度。`);
+    }
+    if (cadence !== null && cadence < 168) {
+      notes.push(`【步頻建議】目前步頻 ${cadence} spm 偏低，依 Heiderscheit 文獻建議嘗試微幅加快步頻 5%–7%（目標約 ${Math.round(cadence * 1.06)} spm）可減輕膝關節負荷。`);
+    }
+    if (avgStep !== null) {
+      notes.push(`目前滑動平均步幅為 ${avgStep.toFixed(1)} cm，可觀察下方藍色趨勢線是否隨跑步時間保持穩定。`);
+    }
+    if (!notes.length) {
+      notes.push('目前跑姿各項指標（步頻、COM落點、軀幹傾角）均落在良好生物力學區間內。');
+    }
+  }
+  $('aiFeedback').textContent = notes.join(' ');
+
+  const valid = Object.values(states).some(s => s.knee !== null || s.trunk !== null || s.ankle !== null);
+  latest = {
+    time: t, side,
+    leftKnee: states.left.knee, rightKnee: states.right.knee, knee: st.knee,
+    trunk, cadence,
+    avgStepCm: avgStep,
+    lastStepCm: strideState.lastStepCm,
+    comLeadCm: comLead,
+    oscCm: oscCm,
+    confidence: Math.round(st.q * 100)
+  };
+
+  if (record && valid && t - lastSample >= 0.095) {
+    rows.push(latest);
+    lastSample = t;
+    if (rows.length >= 100000) { video.pause(); status('已達記錄上限，請先匯出 CSV'); }
+  }
+
+  // 更新兩張即時波形圖
+  if (record && t - lastChart >= 0.1) {
+    const label = t.toFixed(1) + 's';
+    if (chart) {
+      chart.data.labels.push(label);
+      [states.left.knee, states.right.knee, trunk].forEach((v, i) => chart.data.datasets[i].data.push(v));
+      if (chart.data.labels.length > 90) { chart.data.labels.shift(); chart.data.datasets.forEach(d => d.data.shift()); }
+      chart.update('none');
+    }
+    if (strideChart) {
+      strideChart.data.labels.push(label);
+      [strideState.lastStepCm, avgStep, comLead].forEach((v, i) => strideChart.data.datasets[i].data.push(v));
+      if (strideChart.data.labels.length > 90) { strideChart.data.labels.shift(); strideChart.data.datasets.forEach(d => d.data.shift()); }
+      strideChart.update('none');
+    }
+    lastChart = t;
+  }
+
+  draw(r.image, lm);
+}
+
+async function init() {
+  if (initPromise) return initPromise;
+  initPromise = (async () => {
+    if (typeof Pose === 'undefined') throw Error('姿態套件載入失敗，請確認網路後重新整理');
+    status('正在載入 MediaPipe 姿態模型，首次啟動約需數秒…');
+    pose = new Pose({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${f}` });
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.onResults(results);
+    await pose.initialize();
+  })();
+  try { await initPromise; } catch (e) { pose = null; initPromise = null; throw Error('模型載入失敗（' + e.message + '）'); }
+}
+
+function stop() {
+  epoch++; video.pause();
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null; video.removeAttribute('src'); video.load();
+  $('emptyState').hidden = false; $('btnWebcam').textContent = '📷 開啟即時攝影機';
+  if (sourceURL) { URL.revokeObjectURL(sourceURL); sourceURL = null; }
+  mode = ''; reset();
+}
+
+function failure(e) {
+  status(`無法分析：${e.message || e}`);
+  $('aiFeedback').textContent = '請檢查網路、相機權限與影片格式。攝影機需使用 HTTPS 或 localhost 開啟。';
+}
+
+async function chooseFile(file) {
+  if (!file) return;
+  stop(); const token = epoch;
+  try {
+    await init(); if (token !== epoch) return;
+    sourceURL = URL.createObjectURL(file); mode = 'file';
+    video.src = sourceURL; video.loop = false; video.muted = true;
+    video.playbackRate = Number(document.querySelector('.speed-btn.active').dataset.speed);
+    await video.play(); if (token !== epoch) return;
+    status(`影片已開啟：${file.name}`);
+  } catch (e) { failure(e); }
+}
+
+$('videoUpload').onchange = e => { chooseFile(e.target.files[0]); e.target.value = ''; };
+
+$('btnWebcam').onclick = async () => {
+  if (mode === 'camera') { stop(); status('攝影機已關閉'); return; }
+  stop(); const token = epoch;
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw Error('瀏覽器不支援攝影機，請用 HTTPS 或 localhost');
+    await init(); if (token !== epoch) return;
+    const s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' }, audio: false });
+    if (token !== epoch) { s.getTracks().forEach(t => t.stop()); return; }
+    stream = s; mode = 'camera'; video.srcObject = s; video.playbackRate = 1;
+    await video.play();
+    $('btnWebcam').textContent = '關閉攝影機';
+  } catch (e) { failure(e); }
+};
+
+async function tick() {
+  if (!busy && mode && pose && video.readyState >= 2 && !video.seeking && !video.paused && !video.ended) {
+    const t = video.currentTime;
+    if (t !== lastTime) {
+      busy = true; frameTime = t; frameEpoch = epoch; lastTime = t;
+      try {
+        dimensions();
+        if (inferenceCanvas.width !== canvas.width || inferenceCanvas.height !== canvas.height) {
+          inferenceCanvas.width = canvas.width; inferenceCanvas.height = canvas.height;
+        }
+        inferenceCtx.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
+        await pose.send({ image: inferenceCanvas });
+      } catch (e) { video.pause(); failure(e); } finally { busy = false; }
+    }
+  }
+  updateTime();
+  requestAnimationFrame(tick);
+}
+
+function fmt(t) { return Number.isFinite(t) ? `${Math.floor(t / 60).toString().padStart(2, '0')}:${Math.floor(t % 60).toString().padStart(2, '0')}` : '00:00'; }
+
+function updateTime() {
+  const file = mode === 'file', d = video.duration;
+  $('seek').disabled = !file || !Number.isFinite(d);
+  $('timeLabel').textContent = `${fmt(video.currentTime)} / ${file ? fmt(d) : '即時'}`;
+  if (file && Number.isFinite(d)) { $('seek').max = d; $('seek').value = video.currentTime; }
+  $('btnPlayPause').textContent = video.paused ? '▶ 播放' : '⏸ 暫停';
+}
+
+$('seek').oninput = e => { if (mode === 'file') { epoch++; video.currentTime = Number(e.target.value); reset(); status('已跳轉，重新累積數據'); } };
+video.onseeked = () => { if (video.paused && video.readyState >= 2) draw(video, null); };
+video.onended = () => status(`分析完成 · 共 ${rows.length} 筆數據，可匯出 CSV`);
+video.onerror = () => failure(Error('無法解碼影片，請改用 MP4 (H.264) 或 WebM'));
+
+$('btnPlayPause').onclick = async () => {
+  if (!mode) return;
+  try {
+    if (video.ended) { epoch++; reset(); video.currentTime = 0; }
+    if (video.paused) await video.play(); else video.pause();
+  } catch (e) { failure(e); }
+};
+
+document.querySelectorAll('.speed-btn').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.speed-btn').forEach(x => x.classList.toggle('active', x === b));
+  if (mode !== 'camera') video.playbackRate = Number(b.dataset.speed);
+});
+
+$('side').onchange = () => { selected = null; if (lastResult) render(lastResult, false); };
+$('runnerHeight').onchange = () => { pxPerCm = null; if (lastResult) render(lastResult, false); };
+
+$('btnClearTrail').onclick = () => {
+  for (const st of Object.values(states)) { st.trail = []; st.hipTrail = []; }
+  if (lastResult) draw(lastResult.image, lastResult.poseLandmarks);
+};
+
+$('btnExportCSV').onclick = () => {
+  if (!rows.length) { status('目前沒有有效數據，請先播放有全身入鏡的影片'); return; }
+  const keys = ['time', 'side', 'leftKnee', 'rightKnee', 'knee', 'trunk', 'cadence', 'avgStepCm', 'lastStepCm', 'comLeadCm', 'oscCm', 'confidence'];
+  const header = 'Time(s),SummarySide,LeftKnee(deg),RightKnee(deg),SummaryKnee(deg),TrunkLean(deg),Cadence(spm),AvgStepLength(cm),LastStepLength(cm),COM_Lead_Overstride(cm),COM_VerticalOsc(cm),LegConfidence(%)';
+  const csv = '\uFEFF' + header + '\r\n' + rows.map(r => keys.map(k => r[k] == null ? '' : typeof r[k] === 'number' ? r[k].toFixed(2) : r[k]).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })), a = document.createElement('a');
+  a.href = url; a.download = 'running_biomechanics_v4.csv'; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+if (typeof Chart !== 'undefined') {
+  chart = new Chart($('kinematicChart'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: '左膝 °', data: [], borderColor: '#38bdf8', borderWidth: 2, pointRadius: 0 },
+        { label: '右膝 °', data: [], borderColor: '#f472b6', borderWidth: 2, pointRadius: 0 },
+        { label: '軀幹前傾 °', data: [], borderColor: '#10b981', borderWidth: 2, pointRadius: 0 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      scales: { x: { display: false }, y: { min: 0, max: 185, ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#334155' } } },
+      plugins: { legend: { labels: { color: '#f8fafc', boxWidth: 12, font: { size: 11 } } } }
+    }
+  });
+
+  strideChart = new Chart($('strideChart'), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: '單步跨距 (cm)', data: [], borderColor: 'rgba(56, 189, 248, 0.45)', borderDash: [4, 4], borderWidth: 1.5, pointRadius: 0 },
+        { label: '平均步幅曲線 (cm)', data: [], borderColor: '#38bdf8', borderWidth: 2.5, pointRadius: 0, tension: 0.25 },
+        { label: 'COM前跨距離 (cm)', data: [], borderColor: '#ef4444', borderWidth: 2, pointRadius: 0, tension: 0.2 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      scales: { x: { display: false }, y: { min: 0, max: 180, ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#334155' } } },
+      plugins: { legend: { labels: { color: '#f8fafc', boxWidth: 12, font: { size: 11 } } } }
+    }
+  });
+}
+
+for (const id of ['aspect', 'fit', 'mirror', 'skeleton', 'angles', 'chkAnkleTrail', 'chkRightTrail', 'chkHipTrail', 'overlayTrail', 'trailDuration', 'runDirection']) {
+  $(id).onchange = () => { layout(); if (lastResult) draw(lastResult.image, lastResult.poseLandmarks); else drawTrajectory(); };
+}
+
+function drawTrajectory() {
+  const plot = $('trajectoryCanvas'); if (!plot) return;
+  const box = plot.getBoundingClientRect(); if (!box.width || !box.height) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2), w = box.width, h = box.height;
+  if (plot.width !== Math.round(w * dpr) || plot.height !== Math.round(h * dpr)) {
+    plot.width = Math.round(w * dpr); plot.height = Math.round(h * dpr);
+  }
+  const c = plot.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+  const margin = { left: 44, right: 18, top: 20, bottom: 34 }, aw = w - margin.left - margin.right, ah = h - margin.top - margin.bottom;
+  const scale = Math.min(aw / canvas.width, ah / canvas.height), pw = canvas.width * scale, ph = canvas.height * scale;
+  const x0 = margin.left + (aw - pw) / 2, y0 = margin.top + (ah - ph) / 2;
+
+  c.font = '11px system-ui'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    const u = i / 4, x = x0 + pw * u, y = y0 + ph * u;
+    c.strokeStyle = '#29384f'; c.lineWidth = 1; c.beginPath();
+    c.moveTo(x, y0); c.lineTo(x, y0 + ph); c.moveTo(x0, y); c.lineTo(x0 + pw, y); c.stroke();
+    c.fillStyle = '#94a3b8'; c.fillText(`${i * 25}%`, x, y0 + ph + 15);
+    c.textAlign = 'right'; c.fillText(`${i * 25}%`, x0 - 8, y); c.textAlign = 'center';
+  }
+  c.strokeStyle = '#64748b'; c.strokeRect(x0, y0, pw, ph);
+  c.fillStyle = '#94a3b8'; c.fillText('水平位置 X', x0 + pw / 2, h - 8);
+  c.save(); c.translate(12, y0 + ph / 2); c.rotate(-Math.PI / 2); c.fillText('垂直位置 Y ↓', 0, 0); c.restore();
+
+  const seconds = Number($('trailDuration').value), counts = []; let total = 0;
+  c.save(); c.beginPath(); c.rect(x0, y0, pw, ph); c.clip();
+  for (const side of ['left', 'right']) {
+    const enabled = $(side === 'left' ? 'chkAnkleTrail' : 'chkRightTrail').checked;
+    const pts = states[side].trail.filter(p => frameTime - p.t <= seconds), label = side === 'left' ? '左' : '右';
+    counts.push(`${label} ${enabled ? pts.length : '隱藏'}`);
+    if (!enabled || !pts.length) continue;
+    total += pts.length;
+    const project = p => ({ x: x0 + ($('mirror').checked ? canvas.width - p.x : p.x) * scale, y: y0 + p.y * scale });
+    for (let i = 1; i < pts.length; i++) {
+      if (pts[i].t - pts[i - 1].t > 0.5) continue;
+      const a = project(pts[i - 1]), b = project(pts[i]);
+      c.strokeStyle = colors[side]; c.globalAlpha = 0.18 + 0.82 * i / pts.length;
+      c.lineWidth = 2.4; c.lineJoin = 'round'; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+    }
+    c.globalAlpha = 1; c.strokeStyle = colors[side]; c.lineWidth = 2;
+    const first = project(pts[0]), last = project(pts.at(-1));
+    c.beginPath(); c.arc(first.x, first.y, 4, 0, Math.PI * 2); c.stroke();
+    c.fillStyle = colors[side]; c.beginPath(); c.arc(last.x, last.y, 5, 0, Math.PI * 2); c.fill();
+  }
+  c.restore(); c.globalAlpha = 1;
+  if (!total) {
+    c.fillStyle = '#cbd5e1'; c.font = '13px system-ui'; c.textAlign = 'center';
+    c.fillText(lastResult ? '目前沒有可顯示的腳部軌跡' : '播放影片後，左右腳軌跡會顯示在這裡', x0 + pw / 2, y0 + ph / 2);
+  }
+  $('trajectoryStatus').textContent = `近 ${seconds} 秒 · ${counts.join('／')}`;
+}
+
+const trajectoryObserver = new ResizeObserver(() => drawTrajectory());
+trajectoryObserver.observe($('trajectoryCanvas').parentElement);
+
+layout(); missing(); drawTrajectory(); requestAnimationFrame(tick);
+</script>
+
+</body>
+</html>
